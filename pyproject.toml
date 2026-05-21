@@ -13,6 +13,7 @@ dependencies = [
     'scipy',
     'pyglet',
     'mujoco',
+    'mysql-connector-python',
 ]
 
 [tool.setuptools.packages.find]
