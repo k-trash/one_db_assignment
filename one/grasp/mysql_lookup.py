@@ -14,6 +14,7 @@ DEFAULT_TABLE = 'grasp_pose_lookup'
 
 @dataclass(frozen=True)
 class DBConfig:
+    """Connection settings shared by the offline generator and online runner."""
     host: str
     port: int
     user: str
@@ -23,6 +24,7 @@ class DBConfig:
 
 
 def add_db_args(parser):
+    """Add MySQL CLI options, with environment variables as convenient defaults."""
     parser.add_argument('--db-host', default=os.getenv('ONE_DB_HOST', '127.0.0.1'))
     parser.add_argument('--db-port', type=int, default=int(os.getenv('ONE_DB_PORT', '3306')))
     parser.add_argument('--db-user', default=os.getenv('ONE_DB_USER', 'root'))
@@ -43,6 +45,7 @@ def db_config_from_args(args):
 
 
 def connect(config, with_database=True):
+    """Open a MySQL connection and report a clear error if the driver is missing."""
     try:
         import mysql.connector
     except ImportError as exc:
@@ -58,6 +61,7 @@ def connect(config, with_database=True):
 
 
 def create_schema(config):
+    """Create the lookup database/table used for one-to-one pose retrieval."""
     conn = connect(config, with_database=False)
     cur = conn.cursor()
     cur.execute(f'CREATE DATABASE IF NOT EXISTS `{config.database}`')
@@ -108,6 +112,7 @@ def create_schema(config):
 
 
 def make_robot(name):
+    """Build one of the manipulators supported by this repository."""
     if name == 'rs007l':
         return khi_rs007l.RS007L()
     if name == 'lite6':
@@ -116,12 +121,14 @@ def make_robot(name):
 
 
 def make_gripper(name):
+    """Build the gripper paired with the stored grasp records."""
     if name == 'or2fg7':
         return or_2fg7.OR2FG7()
     raise ValueError(f'Unsupported gripper: {name}')
 
 
 def normalize_quat(quat):
+    """Normalize quaternion sign so equivalent rotations map to one key."""
     quat = np.asarray(quat, dtype=np.float32).copy()
     norm = np.linalg.norm(quat)
     if norm == 0:
@@ -133,6 +140,12 @@ def normalize_quat(quat):
 
 
 def pose_key(pos, rotmat, pos_res=0.005, quat_res=0.01):
+    """Convert a continuous object pose into a deterministic quantized key.
+
+    The database is intentionally an exact lookup table.  Position and
+    quaternion components are quantized so repeated measurements that fall in
+    the same bin retrieve the same grasp without running IK online.
+    """
     pos_i = np.rint(np.asarray(pos, dtype=np.float32) / pos_res).astype(np.int64)
     quat = normalize_quat(oum.quat_from_rotmat(rotmat))
     quat_i = np.rint(quat / quat_res).astype(np.int64)
@@ -141,12 +154,14 @@ def pose_key(pos, rotmat, pos_res=0.005, quat_res=0.01):
 
 
 def tf_to_pos_quat(tf):
+    """Split a homogeneous transform into position and normalized quaternion."""
     pos = np.asarray(tf[:3, 3], dtype=np.float32)
     quat = normalize_quat(oum.quat_from_rotmat(tf[:3, :3]))
     return pos, quat
 
 
 def insert_solution(conn, table, row):
+    """Insert one solved pose, replacing the old solution for the same key."""
     cols = (
         'robot_name', 'gripper_name', 'object_name', 'pose_key',
         'object_px', 'object_py', 'object_pz',
@@ -173,6 +188,7 @@ def insert_solution(conn, table, row):
 
 def lookup_solution(conn, table, robot_name, gripper_name, object_name,
                     pos, rotmat, pos_res=0.005, quat_res=0.01):
+    """Lookup by a continuous pose after applying the same quantization."""
     key = pose_key(pos, rotmat, pos_res=pos_res, quat_res=quat_res)
     return lookup_solution_by_key(conn, table, robot_name, gripper_name,
                                   object_name, key)
@@ -180,6 +196,7 @@ def lookup_solution(conn, table, robot_name, gripper_name, object_name,
 
 def lookup_solution_by_key(conn, table, robot_name, gripper_name, object_name,
                            key):
+    """Lookup a previously printed/generated pose key exactly."""
     cur = conn.cursor(dictionary=True)
     cur.execute(
         f'''SELECT * FROM `{table}`
@@ -200,6 +217,7 @@ def lookup_solution_by_key(conn, table, robot_name, gripper_name, object_name,
 
 
 def add_common_task_args(parser):
+    """Add robot/object options shared by both scripts."""
     parser.add_argument('--robot', default='rs007l', choices=('rs007l', 'lite6'))
     parser.add_argument('--gripper', default='or2fg7', choices=('or2fg7',))
     parser.add_argument('--object-name', default='bunny')
@@ -208,6 +226,7 @@ def add_common_task_args(parser):
 
 
 def positive_int(value):
+    """argparse validator for counts such as sample size and commit interval."""
     value = int(value)
     if value <= 0:
         raise argparse.ArgumentTypeError('must be positive')

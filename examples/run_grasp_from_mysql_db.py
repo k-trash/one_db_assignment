@@ -6,6 +6,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# The runner lives under examples/, so direct execution needs the repository
+# root in sys.path before importing the local one package.
 from one.grasp.mysql_lookup import (
     add_common_task_args,
     add_db_args,
@@ -20,6 +22,7 @@ from one import ouc, oum, osso, ossop, ovw
 
 
 def build_parser():
+    """Create CLI options for online DB-backed grasp execution."""
     parser = argparse.ArgumentParser(
         description='Run the bunny grasp task from a MySQL grasp lookup table.'
     )
@@ -40,6 +43,7 @@ def build_parser():
 
 
 def interpolate_qs(q0, q1, steps):
+    """Generate a simple joint-space interpolation for visualization."""
     steps = max(int(steps), 1)
     for i in range(steps):
         t = (i + 1) / steps
@@ -47,6 +51,7 @@ def interpolate_qs(q0, q1, steps):
 
 
 def apply_pose_from_row(bunny, row):
+    """Place the bunny exactly at the stored database pose."""
     pos = np.array(
         [row['object_px'], row['object_py'], row['object_pz']],
         dtype=np.float32,
@@ -59,6 +64,7 @@ def apply_pose_from_row(bunny, row):
 
 
 def run_headless(robot, gripper, goal_qs, jaw_width):
+    """Apply the stored grasp state without launching the viewer."""
     for qs in interpolate_qs(robot.qs.copy(), goal_qs, 120):
         robot.fk(qs=qs)
     gripper.set_jaw_width(jaw_width)
@@ -66,6 +72,7 @@ def run_headless(robot, gripper, goal_qs, jaw_width):
 
 
 def run_viewer(args, robot, gripper, bunny, row):
+    """Visualize the database grasp without solving IK at runtime."""
     base = ovw.World(
         cam_pos=(2, 2, 1.5),
         cam_lookat_pos=(0, 0, 0.75),
@@ -81,12 +88,15 @@ def run_viewer(args, robot, gripper, bunny, row):
     jaw_width = float(row['jaw_width'])
     start_qs = robot.qs.copy()
     timeline = []
+    # The trajectory is intentionally simple: move to the stored pre-grasp
+    # configuration, close the gripper, hold briefly, then return home.
     timeline.extend(interpolate_qs(start_qs, goal_qs, args.grasp_steps))
     timeline.extend([goal_qs.copy()] * max(args.hold_steps, 0))
     timeline.extend(interpolate_qs(goal_qs, start_qs, args.home_steps))
     state = {'idx': 0, 'closed': False}
 
     def tick(dt):
+        """Advance one frame of the precomputed joint-space playback."""
         idx = state['idx']
         if idx >= len(timeline):
             return
@@ -101,16 +111,20 @@ def run_viewer(args, robot, gripper, bunny, row):
 
 
 def main():
+    """Fetch one stored grasp by pose key or quantized object pose and run it."""
     args = build_parser().parse_args()
     config = db_config_from_args(args)
     conn = connect(config)
     if args.pose_key:
+        # pose_key is the most reliable way to replay a randomly generated row.
         row = lookup_solution_by_key(
             conn, config.table,
             args.robot, args.gripper, args.object_name,
             args.pose_key,
         )
     else:
+        # This path is useful when an external perception system provides a
+        # pose that was quantized with the same resolution during generation.
         obj_pos = np.asarray(args.object_pos, dtype=np.float32)
         obj_rot = oum.rotmat_from_axangle(
             ouc.StandardAxis.Z, np.deg2rad(args.object_yaw_deg)
@@ -131,6 +145,8 @@ def main():
 
     robot = make_robot(args.robot)
     gripper = make_gripper(args.gripper)
+    # Mounting the gripper updates the robot TCP, so stored joint states refer
+    # to the same tool geometry used when the database was generated.
     robot.engage(gripper)
     bunny = osso.SceneObject.from_file(
         args.object_file, collision_type=ouc.CollisionType.MESH, is_free=True
