@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 import one.utils.math as oum
-from one import khi_rs007l, or_2fg7, xarm_lite6
+from one import denso_cvr038, khi_rs007l, or_2fg7, xarm_lite6
 
 
 DEFAULT_TABLE = 'grasp_pose_lookup'
@@ -115,6 +115,8 @@ def make_robot(name):
     """Build one of the manipulators supported by this repository."""
     if name == 'rs007l':
         return khi_rs007l.RS007L()
+    if name == 'cvr038':
+        return denso_cvr038.CVR038()
     if name == 'lite6':
         return xarm_lite6.Lite6()
     raise ValueError(f'Unsupported robot: {name}')
@@ -218,7 +220,11 @@ def lookup_solution_by_key(conn, table, robot_name, gripper_name, object_name,
 
 def add_common_task_args(parser):
     """Add robot/object options shared by both scripts."""
-    parser.add_argument('--robot', default='rs007l', choices=('rs007l', 'lite6'))
+    parser.add_argument(
+        '--robot',
+        default='rs007l',
+        choices=('rs007l', 'cvr038', 'lite6'),
+    )
     parser.add_argument('--gripper', default='or2fg7', choices=('or2fg7',))
     parser.add_argument('--object-name', default='bunny')
     parser.add_argument('--pos-res', type=float, default=0.005)
